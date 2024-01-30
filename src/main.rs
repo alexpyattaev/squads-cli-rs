@@ -7,8 +7,8 @@ use {
         keypair::{CliSignerInfo, DefaultSigner},
         offline::OfflineArgs,
     },
+    solana_cli_config::{Config, CONFIG_FILE},
     solana_client::{client_error, rpc_client::RpcClient},
-    solana_cli_config::{CONFIG_FILE, Config},
     solana_sdk::{
         commitment_config::CommitmentConfig,
         instruction::{AccountMeta, Instruction},
@@ -18,9 +18,7 @@ use {
         system_program,
         transaction::Transaction,
     },
-    std::{
-        str::FromStr,
-    },
+    std::str::FromStr,
 };
 
 const SQUADS_MPL_PROGRAM_ID: Pubkey = pubkey!("SMPLecH534NA9acpos4G6x7uf3LWbCAwZQE9e8ZekMu");
@@ -32,20 +30,22 @@ pub struct AnchorWrapper<T: AnchorData> {
     data: T,
 }
 
-pub trait AnchorData: BorshDeserialize + BorshSerialize{
+pub trait AnchorData: BorshDeserialize + BorshSerialize {
     const DISCRIMINATOR: [u8; 8];
 
-    fn anchor_wrap(self) -> AnchorWrapper::<Self> {
+    fn anchor_wrap(self) -> AnchorWrapper<Self> {
         AnchorWrapper::<Self> {
             discriminator: Self::DISCRIMINATOR,
             data: self,
         }
     }
 
-    fn anchor_unwrap(wrapped: AnchorWrapper::<Self>) -> Option<Self> {
-        let AnchorWrapper::<Self> { discriminator, data } = wrapped;
-        (discriminator == Self::DISCRIMINATOR)
-            .then_some(data)
+    fn anchor_unwrap(wrapped: AnchorWrapper<Self>) -> Option<Self> {
+        let AnchorWrapper::<Self> {
+            discriminator,
+            data,
+        } = wrapped;
+        (discriminator == Self::DISCRIMINATOR).then_some(data)
     }
 
     fn anchor_unwrap_from_bytes<T: AsRef<[u8]>>(bytes: T) -> Option<Self> {
@@ -60,7 +60,6 @@ pub trait AnchorData: BorshDeserialize + BorshSerialize{
             .ok()
             .and_then(Self::anchor_unwrap)
     }
-
 }
 
 trait AnchorAccount: AnchorData {
@@ -83,7 +82,7 @@ trait SquadsAccount {}
 
 impl<T> AnchorAccount for T
 where
-    T: SquadsAccount + AnchorData
+    T: SquadsAccount + AnchorData,
 {
     const PROGRAM_ID: Pubkey = SQUADS_MPL_PROGRAM_ID;
 }
@@ -98,7 +97,7 @@ pub fn squads_transaction_pda(multisig_address: &Pubkey, transaction_index: u32)
         b"squad",
         multisig_address.as_ref(),
         &transaction_index.to_le_bytes(),
-        b"transaction"
+        b"transaction",
     ];
     Pubkey::find_program_address(&seeds, &SQUADS_MPL_PROGRAM_ID)
 }
@@ -117,7 +116,12 @@ impl AnchorData for CreateMultisigInstructionData {
 
 impl CreateMultisigInstructionData {
     pub fn new(threshold: u16, create_key: Pubkey, members: Vec<Pubkey>, meta: String) -> Self {
-        Self { threshold, create_key, members, meta }
+        Self {
+            threshold,
+            create_key,
+            members,
+            meta,
+        }
     }
 }
 
@@ -126,7 +130,7 @@ fn create_multisig_instruction(
     threshold: u16,
     create_key: Pubkey,
     members: Vec<Pubkey>,
-    meta: String
+    meta: String,
 ) -> Instruction {
     let (multisig_address, _bump) = squads_multisig_pda(&create_key);
     let accounts = vec![
@@ -134,7 +138,8 @@ fn create_multisig_instruction(
         AccountMeta::new(creator, true),
         AccountMeta::new_readonly(system_program::id(), false),
     ];
-    let data = CreateMultisigInstructionData::new(threshold, create_key, members, meta).anchor_wrap();
+    let data =
+        CreateMultisigInstructionData::new(threshold, create_key, members, meta).anchor_wrap();
     Instruction::new_with_borsh(SQUADS_MPL_PROGRAM_ID, &data, accounts)
 }
 
@@ -161,7 +166,8 @@ pub fn create_transaction_instruction(
     authority_index: u32,
     next_transaction_index: u32,
 ) -> Instruction {
-    let (transaction_address, _bump) = squads_transaction_pda(&multisig_address, next_transaction_index);
+    let (transaction_address, _bump) =
+        squads_transaction_pda(&multisig_address, next_transaction_index);
     let accounts = vec![
         AccountMeta::new(multisig_address, false),
         AccountMeta::new(transaction_address, false),
@@ -244,7 +250,6 @@ impl AnchorData for TransactionAccount {
 }
 
 impl SquadsAccount for TransactionAccount {}
-
 
 #[derive(Debug, BorshDeserialize, BorshSerialize)]
 struct VoteTransactionInstructionData {}
@@ -368,72 +373,109 @@ fn main() {
     let config_path = clap::value_t_or_exit!(arg_matches, "config", String);
     let cli_config = Config::load(&config_path).expect("successful config load");
     let commitment = CommitmentConfig::from_str(&cli_config.commitment).unwrap_or_default();
-    let keypair_path = clap::value_t!(arg_matches, "keypair", String).unwrap_or(cli_config.keypair_path);
+    let keypair_path =
+        clap::value_t!(arg_matches, "keypair", String).unwrap_or(cli_config.keypair_path);
     let default_signer = DefaultSigner::new("keypair", keypair_path);
     //let rpc_client = RpcClient::new("https://api.devnet.solana.com");
     let rpc_client = RpcClient::new("https://api.mainnet-beta.solana.com");
     let (fee_payer_key, fee_payer_pubkey) = (None, Option::<Pubkey>::None);
     let mut bulk_signers = vec![fee_payer_key];
     let mut wallet_manager = None;
-    
+
     let maybe_ix_batch: Option<(Vec<Instruction>, CliSignerInfo)> = match arg_matches.subcommand() {
         ("multisig-create", Some(sub_matches)) => {
             let threshold = value_t_or_exit!(sub_matches, "threshold", u16);
-            let metadata = sub_matches.value_of("metadata").map(String::from).expect("valid `metadata` string");
-            let members = pubkeys_of_multiple_signers(&sub_matches, "members", &mut wallet_manager).expect("valid `members` pubkeys").expect("`members` arg exists");
-            let create_key = pubkey_of(&sub_matches, "create_key")
-                .unwrap_or_else(|| {
-                    let create_key = Pubkey::new_rand();
-                    println!("create-key: {create_key}");
-                    create_key
-                });
-            let (creator_key, creator_pubkey) = signer_of(&sub_matches, "creator", &mut wallet_manager).expect("`creator` is valid signer");
+            let metadata = sub_matches
+                .value_of("metadata")
+                .map(String::from)
+                .expect("valid `metadata` string");
+            let members = pubkeys_of_multiple_signers(&sub_matches, "members", &mut wallet_manager)
+                .expect("valid `members` pubkeys")
+                .expect("`members` arg exists");
+            let create_key = pubkey_of(&sub_matches, "create_key").unwrap_or_else(|| {
+                let create_key = Pubkey::new_rand();
+                println!("create-key: {create_key}");
+                create_key
+            });
+            let (creator_key, creator_pubkey) =
+                signer_of(&sub_matches, "creator", &mut wallet_manager)
+                    .expect("`creator` is valid signer");
 
             bulk_signers.push(creator_key);
-            let signer_info = default_signer.generate_unique_signers(bulk_signers, &sub_matches, &mut wallet_manager).expect("unique signers");
-            let creator_pubkey = signer_info.signers[signer_info.index_of(creator_pubkey).unwrap()].pubkey();
+            let signer_info = default_signer
+                .generate_unique_signers(bulk_signers, &sub_matches, &mut wallet_manager)
+                .expect("unique signers");
+            let creator_pubkey =
+                signer_info.signers[signer_info.index_of(creator_pubkey).unwrap()].pubkey();
 
-            let ix = create_multisig_instruction(creator_pubkey, threshold, create_key, members, metadata);
+            let ix = create_multisig_instruction(
+                creator_pubkey,
+                threshold,
+                create_key,
+                members,
+                metadata,
+            );
             println!("{ix:?}");
 
             //Some(vec![ix], bulk_signers)
             None
-
         }
         ("transaction-create", Some(sub_matches)) => {
-            let multisig_address = pubkey_of(&sub_matches, "multisig_address").expect("`multisig_address` on cli");
-            let (creator_key, creator_pubkey) = signer_of(&sub_matches, "creator", &mut wallet_manager).expect("`creator` is valid signer");
+            let multisig_address =
+                pubkey_of(&sub_matches, "multisig_address").expect("`multisig_address` on cli");
+            let (creator_key, creator_pubkey) =
+                signer_of(&sub_matches, "creator", &mut wallet_manager)
+                    .expect("`creator` is valid signer");
 
             bulk_signers.push(creator_key);
-            
-            let signer_info = default_signer.generate_unique_signers(bulk_signers, &sub_matches, &mut wallet_manager).expect("unique signers");
-            let creator_pubkey = signer_info.signers[signer_info.index_of(creator_pubkey).unwrap()].pubkey();
+
+            let signer_info = default_signer
+                .generate_unique_signers(bulk_signers, &sub_matches, &mut wallet_manager)
+                .expect("unique signers");
+            let creator_pubkey =
+                signer_info.signers[signer_info.index_of(creator_pubkey).unwrap()].pubkey();
 
             let MultisigAccount {
                 authority_index,
                 transaction_index,
                 member_keys,
                 ..
-            } = MultisigAccount::query(&rpc_client, &multisig_address).unwrap().unwrap();
-            assert!(member_keys.contains(&creator_pubkey), "`creator` MUST be in `multisig.member_keys`");
+            } = MultisigAccount::query(&rpc_client, &multisig_address)
+                .unwrap()
+                .unwrap();
+            assert!(
+                member_keys.contains(&creator_pubkey),
+                "`creator` MUST be in `multisig.member_keys`"
+            );
             let authority_index = u32::from(authority_index);
             let next_transaction_index = transaction_index
                 .checked_add(1)
                 .expect("have not created 4B transactions");
 
-            let ix = create_transaction_instruction(creator_pubkey, multisig_address, authority_index, next_transaction_index);
+            let ix = create_transaction_instruction(
+                creator_pubkey,
+                multisig_address,
+                authority_index,
+                next_transaction_index,
+            );
             println!("{ix:?}");
 
             //Some((vec![ix], signer_info))
             None
         }
         ("transaction-vote", Some(sub_matches)) => {
-            let transaction_address = pubkey_of(&sub_matches, "transaction_address").expect("`transaction_address` on cli");
-            let (multisig_member_key, multisig_member_pubkey) = signer_of(&sub_matches, "multisig_member", &mut wallet_manager).expect("valid `multisig_member`");
+            let transaction_address = pubkey_of(&sub_matches, "transaction_address")
+                .expect("`transaction_address` on cli");
+            let (multisig_member_key, multisig_member_pubkey) =
+                signer_of(&sub_matches, "multisig_member", &mut wallet_manager)
+                    .expect("valid `multisig_member`");
 
             bulk_signers.push(multisig_member_key);
-            let signer_info = default_signer.generate_unique_signers(bulk_signers, &sub_matches, &mut wallet_manager).expect("unique signers");
-            let multisig_member_pubkey = signer_info.signers[signer_info.index_of(multisig_member_pubkey).unwrap()].pubkey();
+            let signer_info = default_signer
+                .generate_unique_signers(bulk_signers, &sub_matches, &mut wallet_manager)
+                .expect("unique signers");
+            let multisig_member_pubkey =
+                signer_info.signers[signer_info.index_of(multisig_member_pubkey).unwrap()].pubkey();
 
             println!("tx: {transaction_address}, voter: {multisig_member_pubkey}");
 
@@ -443,34 +485,62 @@ fn main() {
                 transaction_index,
                 status,
                 ..
-            } = TransactionAccount::query(&rpc_client, &transaction_address).unwrap().unwrap();
-            assert_eq!(status, TransactionStatus::Active, "`transaction.status MUST be `Active`");
+            } = TransactionAccount::query(&rpc_client, &transaction_address)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                status,
+                TransactionStatus::Active,
+                "`transaction.status MUST be `Active`"
+            );
 
             let MultisigAccount {
                 ms_change_index,
                 create_key,
                 member_keys,
                 ..
-            } = MultisigAccount::query(&rpc_client, &multisig_address).unwrap().unwrap();
-            assert!(transaction_index > ms_change_index, "`multsig` account MUST NOT have changed since `transaction` creation");
-            assert!(member_keys.contains(&creator), "`transaction.creator` MUST be in `multisig.member_keys`");
+            } = MultisigAccount::query(&rpc_client, &multisig_address)
+                .unwrap()
+                .unwrap();
+            assert!(
+                transaction_index > ms_change_index,
+                "`multsig` account MUST NOT have changed since `transaction` creation"
+            );
+            assert!(
+                member_keys.contains(&creator),
+                "`transaction.creator` MUST be in `multisig.member_keys`"
+            );
 
-            assert!(member_keys.contains(&multisig_member_pubkey), "voting `multisig_member_pubkey` MUST be in `multisig.member_keys`");
+            assert!(
+                member_keys.contains(&multisig_member_pubkey),
+                "voting `multisig_member_pubkey` MUST be in `multisig.member_keys`"
+            );
 
-            let ix = vote_transaction_instruction(transaction_address, multisig_address, multisig_member_pubkey);
+            let ix = vote_transaction_instruction(
+                transaction_address,
+                multisig_address,
+                multisig_member_pubkey,
+            );
             println!("{ix:?}");
             Some((vec![ix], signer_info))
         }
         _ => unreachable!(),
     };
     if let Some((ix_batch, signer_info)) = maybe_ix_batch {
-        let fee_payer_pubkey = signer_info.signers[signer_info.index_of(fee_payer_pubkey).expect("fee_payer_pubkey index")].pubkey();
+        let fee_payer_pubkey = signer_info.signers[signer_info
+            .index_of(fee_payer_pubkey)
+            .expect("fee_payer_pubkey index")]
+        .pubkey();
         let message = Message::new(&ix_batch, Some(&fee_payer_pubkey));
 
-        let (recent_blockhash, _)  = rpc_client.get_latest_blockhash_with_commitment(commitment).expect("recent blockhash");
+        let (recent_blockhash, _) = rpc_client
+            .get_latest_blockhash_with_commitment(commitment)
+            .expect("recent blockhash");
         let signers = signer_info.signers_for_message(&message);
         let transaction = Transaction::new(&signers, message, recent_blockhash);
-        let tx_id = rpc_client.send_and_confirm_transaction_with_spinner(&transaction).expect("tx broadcast success");
+        let tx_id = rpc_client
+            .send_and_confirm_transaction_with_spinner(&transaction)
+            .expect("tx broadcast success");
         println!("tx: {tx_id}");
     }
 }
