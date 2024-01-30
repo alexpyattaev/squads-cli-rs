@@ -2,6 +2,7 @@ use {
     borsh::{BorshDeserialize, BorshSerialize},
     clap::value_t_or_exit,
     solana_clap_utils::{
+        fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
         input_parsers::*,
         input_validators::*,
         keypair::{CliSignerInfo, DefaultSigner},
@@ -319,6 +320,7 @@ fn main() {
                     [possible values: processed, confirmed, finalized]",
                 ),
         )
+        .arg(fee_payer_arg().global(true))
         .subcommand(clap::SubCommand::with_name("multisig-create")
             .arg(clap::Arg::with_name("threshold")
                 .index(1)
@@ -419,9 +421,12 @@ fn main() {
     let default_signer = DefaultSigner::new("keypair", default_signer_path);
 
     let rpc_client = RpcClient::new_with_commitment(json_rpc_url, commitment);
-    let (fee_payer_key, fee_payer_pubkey) = (None, Option::<Pubkey>::None);
-    let mut bulk_signers = vec![fee_payer_key];
+
     let mut wallet_manager = None;
+    let (fee_payer, fee_payer_pubkey) =
+        signer_of(&arg_matches, FEE_PAYER_ARG.name, &mut wallet_manager)
+            .expect("successful fee-payer parse");
+    let mut bulk_signers = vec![fee_payer];
 
     let maybe_ix_batch: Option<(Vec<Instruction>, CliSignerInfo)> = match arg_matches.subcommand() {
         ("multisig-create", Some(sub_matches)) => {
