@@ -1,16 +1,16 @@
 use {
     borsh::{BorshDeserialize, BorshSerialize},
-    clap::{value_t, value_t_or_exit},
+    clap::value_t_or_exit,
     solana_clap_utils::{
+        fee_payer::{fee_payer_arg, FEE_PAYER_ARG},
         input_parsers::*,
         input_validators::*,
         keypair::{CliSignerInfo, DefaultSigner},
         offline::OfflineArgs,
     },
-    solana_cli_config::{Config, CONFIG_FILE},
+    solana_cli_config::{Config, ConfigInput, CONFIG_FILE},
     solana_client::{client_error, rpc_client::RpcClient},
     solana_sdk::{
-        commitment_config::CommitmentConfig,
         instruction::{AccountMeta, Instruction},
         message::Message,
         pubkey,
@@ -281,14 +281,47 @@ fn main() {
             .takes_value(true)
             .value_name("PATH")
             .default_value(default_config_file)
+            .global(true)
             .help("config file to use")
         )
+        .arg(
+            clap::Arg::with_name("json_rpc_url")
+                .short("u")
+                .long("url")
+                .value_name("URL_OR_MONIKER")
+                .takes_value(true)
+                .global(true)
+                .validator(is_url_or_moniker)
+                .help(
+                    "URL for Solana's JSON RPC or moniker (or their first letter): \
+                       [mainnet-beta, testnet, devnet, localhost]",
+                ),
+        )
         .arg(clap::Arg::with_name("keypair")
+            .short("k")
             .long("keypair")
             .takes_value(true)
+            .global(true)
             .value_name("SIGNER")
             .help("default signer")
         )
+        .arg(
+            clap::Arg::with_name("commitment")
+                .long("commitment")
+                .takes_value(true)
+                .possible_values(&[
+                    "processed",
+                    "confirmed",
+                    "finalized",
+                ])
+                .value_name("COMMITMENT_LEVEL")
+                .global(true)
+                .help(
+                    "Return information at the selected commitment level \
+                    [possible values: processed, confirmed, finalized]",
+                ),
+        )
+        .arg(fee_payer_arg().global(true))
         .subcommand(clap::SubCommand::with_name("multisig-create")
             .arg(clap::Arg::with_name("threshold")
                 .index(1)
@@ -372,15 +405,29 @@ fn main() {
 
     let config_path = clap::value_t_or_exit!(arg_matches, "config", String);
     let cli_config = Config::load(&config_path).expect("successful config load");
-    let commitment = CommitmentConfig::from_str(&cli_config.commitment).unwrap_or_default();
-    let keypair_path =
-        clap::value_t!(arg_matches, "keypair", String).unwrap_or(cli_config.keypair_path);
-    let default_signer = DefaultSigner::new("keypair", keypair_path);
-    //let rpc_client = RpcClient::new("https://api.devnet.solana.com");
-    let rpc_client = RpcClient::new("https://api.mainnet-beta.solana.com");
-    let (fee_payer_key, fee_payer_pubkey) = (None, Option::<Pubkey>::None);
-    let mut bulk_signers = vec![fee_payer_key];
+    let (_, json_rpc_url) = ConfigInput::compute_json_rpc_url_setting(
+        arg_matches.value_of("json_rpc_url").unwrap_or(""),
+        &cli_config.json_rpc_url,
+    );
+
+    let (_, commitment) = ConfigInput::compute_commitment_config(
+        arg_matches.value_of("commitment").unwrap_or(""),
+        &cli_config.commitment,
+    );
+
+    let (_, default_signer_path) = ConfigInput::compute_keypair_path_setting(
+        arg_matches.value_of("keypair").unwrap_or(""),
+        &cli_config.keypair_path,
+    );
+    let default_signer = DefaultSigner::new("keypair", default_signer_path);
+
+    let rpc_client = RpcClient::new_with_commitment(json_rpc_url, commitment);
+
     let mut wallet_manager = None;
+    let (fee_payer, fee_payer_pubkey) =
+        signer_of(&arg_matches, FEE_PAYER_ARG.name, &mut wallet_manager)
+            .expect("successful fee-payer parse");
+    let mut bulk_signers = vec![fee_payer];
 
     let maybe_ix_batch: Option<(Vec<Instruction>, CliSignerInfo)> = match arg_matches.subcommand() {
         ("multisig-create", Some(sub_matches)) => {
@@ -533,9 +580,7 @@ fn main() {
         .pubkey();
         let message = Message::new(&ix_batch, Some(&fee_payer_pubkey));
 
-        let (recent_blockhash, _) = rpc_client
-            .get_latest_blockhash_with_commitment(commitment)
-            .expect("recent blockhash");
+        let recent_blockhash = rpc_client.get_latest_blockhash().expect("recent blockhash");
         let signers = signer_info.signers_for_message(&message);
         let transaction = Transaction::new(&signers, message, recent_blockhash);
         let tx_id = rpc_client
