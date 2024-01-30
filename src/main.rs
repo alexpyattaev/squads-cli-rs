@@ -377,7 +377,8 @@ fn main() {
         clap::value_t!(arg_matches, "keypair", String).unwrap_or(cli_config.keypair_path);
     let default_signer = DefaultSigner::new("keypair", keypair_path);
     //let rpc_client = RpcClient::new("https://api.devnet.solana.com");
-    let rpc_client = RpcClient::new("https://api.mainnet-beta.solana.com");
+    let rpc_client =
+        RpcClient::new_with_commitment("https://api.mainnet-beta.solana.com", commitment);
     let (fee_payer_key, fee_payer_pubkey) = (None, Option::<Pubkey>::None);
     let mut bulk_signers = vec![fee_payer_key];
     let mut wallet_manager = None;
@@ -533,9 +534,7 @@ fn main() {
         .pubkey();
         let message = Message::new(&ix_batch, Some(&fee_payer_pubkey));
 
-        let (recent_blockhash, _) = rpc_client
-            .get_latest_blockhash_with_commitment(commitment)
-            .expect("recent blockhash");
+        let recent_blockhash = rpc_client.get_latest_blockhash().expect("recent blockhash");
         let signers = signer_info.signers_for_message(&message);
         let transaction = Transaction::new(&signers, message, recent_blockhash);
         let tx_id = rpc_client
