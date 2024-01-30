@@ -7,7 +7,7 @@ use {
         keypair::{CliSignerInfo, DefaultSigner},
         offline::OfflineArgs,
     },
-    solana_cli_config::{Config, CONFIG_FILE},
+    solana_cli_config::{Config, ConfigInput, CONFIG_FILE},
     solana_client::{client_error, rpc_client::RpcClient},
     solana_sdk::{
         commitment_config::CommitmentConfig,
@@ -283,6 +283,19 @@ fn main() {
             .default_value(default_config_file)
             .help("config file to use")
         )
+        .arg(
+            clap::Arg::with_name("json_rpc_url")
+                .short("u")
+                .long("url")
+                .value_name("URL_OR_MONIKER")
+                .takes_value(true)
+                .global(true)
+                .validator(is_url_or_moniker)
+                .help(
+                    "URL for Solana's JSON RPC or moniker (or their first letter): \
+                       [mainnet-beta, testnet, devnet, localhost]",
+                ),
+        )
         .arg(clap::Arg::with_name("keypair")
             .long("keypair")
             .takes_value(true)
@@ -372,13 +385,16 @@ fn main() {
 
     let config_path = clap::value_t_or_exit!(arg_matches, "config", String);
     let cli_config = Config::load(&config_path).expect("successful config load");
+    let (_, json_rpc_url) = ConfigInput::compute_json_rpc_url_setting(
+        arg_matches.value_of("json_rpc_url").unwrap_or(""),
+        &cli_config.json_rpc_url,
+    );
     let commitment = CommitmentConfig::from_str(&cli_config.commitment).unwrap_or_default();
     let keypair_path =
         clap::value_t!(arg_matches, "keypair", String).unwrap_or(cli_config.keypair_path);
     let default_signer = DefaultSigner::new("keypair", keypair_path);
-    //let rpc_client = RpcClient::new("https://api.devnet.solana.com");
-    let rpc_client =
-        RpcClient::new_with_commitment("https://api.mainnet-beta.solana.com", commitment);
+
+    let rpc_client = RpcClient::new_with_commitment(json_rpc_url, commitment);
     let (fee_payer_key, fee_payer_pubkey) = (None, Option::<Pubkey>::None);
     let mut bulk_signers = vec![fee_payer_key];
     let mut wallet_manager = None;
