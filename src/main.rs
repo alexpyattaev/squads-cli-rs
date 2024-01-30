@@ -281,6 +281,7 @@ fn main() {
             .takes_value(true)
             .value_name("PATH")
             .default_value(default_config_file)
+            .global(true)
             .help("config file to use")
         )
         .arg(
