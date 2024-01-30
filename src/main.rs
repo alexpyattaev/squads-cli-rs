@@ -10,7 +10,6 @@ use {
     solana_cli_config::{Config, ConfigInput, CONFIG_FILE},
     solana_client::{client_error, rpc_client::RpcClient},
     solana_sdk::{
-        commitment_config::CommitmentConfig,
         instruction::{AccountMeta, Instruction},
         message::Message,
         pubkey,
@@ -407,7 +406,11 @@ fn main() {
         arg_matches.value_of("json_rpc_url").unwrap_or(""),
         &cli_config.json_rpc_url,
     );
-    let commitment = CommitmentConfig::from_str(&cli_config.commitment).unwrap_or_default();
+
+    let (_, commitment) = ConfigInput::compute_commitment_config(
+        arg_matches.value_of("commitment").unwrap_or(""),
+        &cli_config.commitment,
+    );
 
     let (_, default_signer_path) = ConfigInput::compute_keypair_path_setting(
         arg_matches.value_of("keypair").unwrap_or(""),
