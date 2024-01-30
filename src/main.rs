@@ -297,8 +297,10 @@ fn main() {
                 ),
         )
         .arg(clap::Arg::with_name("keypair")
+            .short("k")
             .long("keypair")
             .takes_value(true)
+            .global(true)
             .value_name("SIGNER")
             .help("default signer")
         )
