@@ -304,6 +304,22 @@ fn main() {
             .value_name("SIGNER")
             .help("default signer")
         )
+        .arg(
+            clap::Arg::with_name("commitment")
+                .long("commitment")
+                .takes_value(true)
+                .possible_values(&[
+                    "processed",
+                    "confirmed",
+                    "finalized",
+                ])
+                .value_name("COMMITMENT_LEVEL")
+                .global(true)
+                .help(
+                    "Return information at the selected commitment level \
+                    [possible values: processed, confirmed, finalized]",
+                ),
+        )
         .subcommand(clap::SubCommand::with_name("multisig-create")
             .arg(clap::Arg::with_name("threshold")
                 .index(1)
