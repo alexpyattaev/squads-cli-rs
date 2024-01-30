@@ -1,6 +1,6 @@
 use {
     borsh::{BorshDeserialize, BorshSerialize},
-    clap::{value_t, value_t_or_exit},
+    clap::value_t_or_exit,
     solana_clap_utils::{
         input_parsers::*,
         input_validators::*,
@@ -392,9 +392,12 @@ fn main() {
         &cli_config.json_rpc_url,
     );
     let commitment = CommitmentConfig::from_str(&cli_config.commitment).unwrap_or_default();
-    let keypair_path =
-        clap::value_t!(arg_matches, "keypair", String).unwrap_or(cli_config.keypair_path);
-    let default_signer = DefaultSigner::new("keypair", keypair_path);
+
+    let (_, default_signer_path) = ConfigInput::compute_keypair_path_setting(
+        arg_matches.value_of("keypair").unwrap_or(""),
+        &cli_config.keypair_path,
+    );
+    let default_signer = DefaultSigner::new("keypair", default_signer_path);
 
     let rpc_client = RpcClient::new_with_commitment(json_rpc_url, commitment);
     let (fee_payer_key, fee_payer_pubkey) = (None, Option::<Pubkey>::None);
